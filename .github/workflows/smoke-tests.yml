@@ -1,0 +1,110 @@
+# ERA Books Online smoke tests on GitHub Actions.
+#
+# Runs the 11 must-work checks against the live site every day, and whenever
+# it's started by hand (Actions > ERA Books Online smoke tests > Run workflow).
+# Each run keeps:
+#   - results       results/latest.json: every check, with a finding per step
+#   - report        the Playwright HTML report
+#   - failures      screenshots and traces of anything that failed
+#
+# Secrets (Settings > Secrets and variables > Actions > Secrets):
+#   EBO_BARCODE                member barcode the checks sign in with
+#   EBO_STAFF_USERNAME         staff login for Staff Access
+#   EBO_STAFF_PASSWORD
+#   STUDIO_RESULTS_SECRET      Storytime Studio's AUTOMATIONS_SECRET: each run's
+#                              results are sent to Studio (Platform Settings >
+#                              Automations). Without it, nothing is sent.
+#
+# Everything else has a default below; to change one without editing this
+# file, add a repository *variable* with the same name (Settings > Secrets and
+# variables > Actions > Variables), e.g. EBO_BASE_URL for staging.
+name: ERA Books Online smoke tests
+
+on:
+  schedule:
+    - cron: '0 20 * * *' # every day 20:00 UTC = 6am Sydney (AEST) / 7am (AEDT)
+  workflow_dispatch: {}
+
+concurrency:
+  group: ebo-smoke-tests
+  cancel-in-progress: false # never run two at once: they share one member account
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CI: 'true'
+      # secrets
+      EBO_BARCODE: ${{ secrets.EBO_BARCODE }}
+      EBO_STAFF_USERNAME: ${{ secrets.EBO_STAFF_USERNAME }}
+      EBO_STAFF_PASSWORD: ${{ secrets.EBO_STAFF_PASSWORD }}
+      # settings (override with a repository variable of the same name)
+      EBO_BASE_URL: ${{ vars.EBO_BASE_URL || 'https://www.erabooksonline.com' }}
+      EBO_LIBRARY_PATH: ${{ vars.EBO_LIBRARY_PATH || '/au-demo/' }}
+      EBO_COLLECTION_PATH: ${{ vars.EBO_COLLECTION_PATH || '/collections/picture-books/' }}
+      EBO_FLIPBOOK_BOOK_PATH: ${{ vars.EBO_FLIPBOOK_BOOK_PATH || '/books/09-brave-flipbook/' }}
+      EBO_VIDEO_BOOK_PATH: ${{ vars.EBO_VIDEO_BOOK_PATH || '/books/alien-read-along/' }}
+      EBO_ACTIVITY_BOOK_PATH: ${{ vars.EBO_ACTIVITY_BOOK_PATH || '/books/09-brave-flipbook/' }}
+      EBO_GAME_BOOK_PATH: ${{ vars.EBO_GAME_BOOK_PATH || '/books/3d-dice/' }}
+      EBO_PLAYLIST_PATH: ${{ vars.EBO_PLAYLIST_PATH || '/playlists/picture-books-humour/' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # Google Chrome, not Playwright's Chromium: Chromium can't decode Vimeo's
+      # H.264 video, so the video checks need real Chrome
+      - run: npx playwright install --with-deps chrome
+
+      - name: Run the smoke tests
+        run: npx playwright test
+
+      - name: Keep the results (JSON)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results
+          path: results/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Keep the HTML report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: playwright-report/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Keep failure screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failures
+          path: test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+      # Studio keeps every run for Platform Settings > Automations. Sent even
+      # when checks failed (that's when it matters); if Studio can't be reached
+      # the run gets a warning, not a failure.
+      - name: Send the results to Studio
+        if: always()
+        continue-on-error: true
+        env:
+          STUDIO_URL: ${{ vars.STUDIO_URL || 'https://stp-studio.vercel.app' }}
+          STUDIO_RESULTS_SECRET: ${{ secrets.STUDIO_RESULTS_SECRET }}
+        run: |
+          if [ -z "$STUDIO_RESULTS_SECRET" ]; then echo "STUDIO_RESULTS_SECRET isn't set: not sending."; exit 0; fi
+          if [ ! -f results/latest.json ]; then echo "No results to send."; exit 0; fi
+          curl --fail-with-body -sS -X POST "$STUDIO_URL/api/automations/runs" \
+            -H "Content-Type: application/json" \
+            -H "X-App-Secret: $STUDIO_RESULTS_SECRET" \
+            --data-binary @results/latest.json

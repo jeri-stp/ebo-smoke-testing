@@ -1,0 +1,10 @@
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+# the signed-in session the setup step saves
+.auth/
+# barcodes, usernames and passwords -- never commit
+.env
+.env.local
+results/
