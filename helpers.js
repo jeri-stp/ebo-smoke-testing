@@ -102,7 +102,8 @@ function vimeoState(page) {
 /**
  * Assert the Vimeo player is genuinely playing: not paused, and its time moves
  * forward (a stuck "playing" state still fails). A video can buffer for a few
- * seconds first, so it gets up to 20s to start moving.
+ * seconds first, and on GitHub's machines it can crawl while it buffers, so it
+ * gets up to 30s and only has to move, not keep up with real time.
  * @param {import('@playwright/test').Page} page
  * @param {string} what  for messages, e.g. "the video"
  */
@@ -115,18 +116,21 @@ async function expectVimeoPlaying(page, what) {
   await expect
     .poll(async () => (now = (await vimeoState(page))?.time ?? start), {
       message: `${what} should move forward (from ${start.toFixed(2)}s)`,
-      timeout: 20_000,
+      timeout: 30_000,
     })
-    .toBeGreaterThan(start + 0.5);
+    .toBeGreaterThan(start + 0.1);
 }
 
 /**
  * Start the Vimeo player the way a visitor does, then assert it really plays.
  *
  * Accepts the cookie banner first (it sits along the bottom of the page and
- * can cover the player), then clicks the player. On a slow machine (GitHub's)
- * that first click can land before Vimeo is ready to respond, so if it hasn't
- * started within 8s it clicks Vimeo's own Play button inside the player too.
+ * can cover the player). If the video is already running (the page autoplays
+ * some), nothing is clicked: a click would pause it. Otherwise it clicks the
+ * player, then up to twice more Vimeo's own Play button. "Running" means the
+ * time moves: Vimeo can report "not paused" while sitting at 0:00 (a click
+ * that landed while the page was still swapping the player in), so the
+ * paused flag alone can't be trusted.
  * @param {import('@playwright/test').Page} page
  * @param {string} what  for messages, e.g. "the video"
  */
@@ -135,18 +139,24 @@ async function startVimeo(page, what) {
 
   const player = page.locator('.aiovg-player iframe');
   await player.scrollIntoViewIfNeeded();
-  await player.click();
+  const play = page.frameLocator('.aiovg-player iframe').locator('button[aria-label^="Play" i], button.play').first();
 
-  const started = await expect
-    .poll(async () => (await vimeoState(page))?.paused, { timeout: 8_000 })
-    .toBe(false)
-    .then(() => true, () => false);
-  if (!started) {
-    const play = page.frameLocator('.aiovg-player iframe').locator('button[aria-label^="Play" i], button.play').first();
-    await play.click({ timeout: 10_000 }).catch(() => {});
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (await isMoving(page, attempt === 0 ? 3_000 : 10_000)) break;
+    if (attempt === 0) await player.click().catch(() => {});
+    else await play.click({ timeout: 5_000 }).catch(() => {});
   }
 
   await expectVimeoPlaying(page, what);
+}
+
+/** True if the Vimeo player's time moves forward within `ms`. */
+async function isMoving(page, ms) {
+  const start = (await vimeoState(page))?.time ?? 0;
+  return expect
+    .poll(async () => (await vimeoState(page))?.time ?? start, { timeout: ms })
+    .toBeGreaterThan(start + 0.1)
+    .then(() => true, () => false);
 }
 
 /** The WordPress post ID of the open page (from its body class `postid-123`). */

@@ -43,7 +43,7 @@ test('The Learning Journey opens a book, and finishing a stage is saved', async 
   // its stages
   const view = page.locator('#lj-journey-view');
   await expect(view, `"${title}" should open`).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator('.lj-stage-btn'), 'the book should show its 4 stages').toHaveCount(4);
+  await expect(page.locator('.lj-stage-btn:not(.lj-complete-stage)'), 'the book should show its 4 stages').toHaveCount(4);
 
   // the stage's activity loads (a video or activity frame, or a flipbook)
   const content = page.locator('#lj-content-panel iframe#lj-active-iframe, #lj-content-panel #flipbook').first();

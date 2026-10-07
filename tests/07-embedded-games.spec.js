@@ -27,17 +27,24 @@ test('An embedded game displays', async ({ page, context }) => {
   const res = await context.request.get(src).catch(() => null);
   expect(res?.status(), `the game page should load (${src})`).toBe(200);
 
-  // the game draws something inside its frame
+  // the game draws something inside its frame. Games are built differently
+  // (canvas, images, or plain divs: 3D Dice is CSS-styled divs), so count any
+  // visible element that actually paints: media, a background, or text.
   const body = page.frameLocator('.embedded-wrapper iframe').first().locator('body');
   await expect
     .poll(
       () =>
         body.evaluate((b) => {
-          const shown = Array.from(b.querySelectorAll('canvas, img, svg, button, iframe, video')).filter((el) => {
+          const painted = Array.from(b.querySelectorAll('*')).filter((el) => {
             const r = el.getBoundingClientRect();
-            return r.width > 20 && r.height > 20;
+            if (r.width < 20 || r.height < 20) return false;
+            if (el.matches('canvas, img, svg, video, iframe, button')) return true;
+            const s = getComputedStyle(el);
+            if (s.visibility === 'hidden' || s.display === 'none' || s.opacity === '0') return false;
+            const bg = s.backgroundColor;
+            return s.backgroundImage !== 'none' || (bg !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(bg));
           });
-          return shown.length + ((b.innerText || '').trim().length > 20 ? 1 : 0);
+          return painted.length + ((b.innerText || '').trim().length > 20 ? 1 : 0);
         }).catch(() => 0),
       { message: 'the game should draw something inside its frame', timeout: 30_000 }
     )

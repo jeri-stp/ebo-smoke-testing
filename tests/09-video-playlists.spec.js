@@ -30,9 +30,9 @@ test('A playlist autoplays the next video when one ends', async ({ page }) => {
   const title = page.locator('#js-native-title');
   const firstTitle = (await title.textContent())?.trim() || '';
 
-  // 1. play the first video (the page tries to autoplay it; a click is the fallback)
-  if ((await vimeoState(page))?.paused) await startVimeo(page, 'the first video');
-  else await expectVimeoPlaying(page, 'the first video');
+  // 1. play the first video (the page tries to autoplay it; startVimeo only
+  //    clicks if it isn't already running)
+  await startVimeo(page, 'the first video');
 
   // 2. jump to 5 seconds before the end, so it finishes quickly
   await page.evaluate(async () => {
