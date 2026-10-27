@@ -22,6 +22,18 @@ const { setting } = require('../helpers');
  * are left out.
  */
 
+/**
+ * Why a reply wasn't JSON. SiteGround's anti-bot check answers 202 with its
+ * captcha page; naming /.well-known/sgcaptcha lets Studio count it as
+ * "blocked by SiteGround", not a failure.
+ */
+async function notJson(res) {
+  const text = await res.text().catch(() => '');
+  const captcha = /\/\.well-known\/(sg)?captcha/i;
+  if (captcha.test(res.url()) || captcha.test(text) || res.status() === 202) return `sent to SiteGround's captcha (/.well-known/sgcaptcha), answered ${res.status()}`;
+  return `not JSON (${res.headers()['content-type'] || 'no content type'}: ${text.slice(0, 80).replace(/\s+/g, ' ')})`;
+}
+
 /** Real data: a non-empty list, or an object without "error" that holds something. */
 function hasData(body) {
   if (Array.isArray(body)) return body.length > 0;
@@ -47,7 +59,7 @@ test('Mobile app endpoints return data', async ({ request }) => {
     if (!res) return problems.push(`${path}: no answer`), null;
     if (!res.ok()) return problems.push(`${path}: answered ${res.status()}`), null;
     let body;
-    try { body = await res.json(); } catch { return problems.push(`${path}: not JSON`), null; }
+    try { body = await res.json(); } catch { return problems.push(`${path}: ${await notJson(res)}`), null; }
     if (!hasData(body)) return problems.push(`${path}: no data (${JSON.stringify(body).slice(0, 120)})`), null;
     return body;
   }
